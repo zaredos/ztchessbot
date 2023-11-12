@@ -26,6 +26,7 @@ from contextlib import contextmanager
 import test_bot
 
 
+
 @contextmanager
 def game_manager() -> Iterator[None]:
     """Creates context for game."""
@@ -47,9 +48,10 @@ class Bot:
         self.board = chess.Board(fen if fen else "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
         self.pawn_value = 1
         self.knight_value = 3
-        self.bishop_value = 3
+        self.bishop_value = 3.15
         self.rook_value = 5
         self.queen_value = 9
+        self.king_value = 1000
 
     def check_move_is_legal(self, initial_position, new_position) -> bool:
 
@@ -67,6 +69,7 @@ class Bot:
         return chess.Move.from_uci(initial_position + new_position) in self.board.legal_moves
 
     def next_move(self) -> str:
+        depth = 5
         """
             The main call and response loop for playing a game of chess.
 
@@ -77,58 +80,84 @@ class Bot:
         # Assume that you are playing an arbitrary game. This function, which is
         # the core "brain" of the bot, should return the next move in any circumstance.
 
-        return self.best_move(5).uci()
+        return self.find_best_move(depth).uci()
     
-    def evaluate(self) -> float:
-        material = 0
-        material += len(self.board.pieces(chess.PAWN, chess.WHITE)) * self.pawn_value
-        material += len(self.board.pieces(chess.KNIGHT, chess.WHITE)) * self.knight_value
-        material += len(self.board.pieces(chess.BISHOP, chess.WHITE)) * self.bishop_value
-        material += len(self.board.pieces(chess.ROOK, chess.WHITE)) * self.rook_value
-        material += len(self.board.pieces(chess.QUEEN, chess.WHITE)) * self.queen_value
-        material -= len(self.board.pieces(chess.PAWN, chess.BLACK)) * self.pawn_value
-        material -= len(self.board.pieces(chess.KNIGHT, chess.BLACK)) * self.knight_value
-        material -= len(self.board.pieces(chess.BISHOP, chess.BLACK)) * self.bishop_value
-        material -= len(self.board.pieces(chess.ROOK, chess.BLACK)) * self.rook_value
-        material -= len(self.board.pieces(chess.QUEEN, chess.BLACK)) * self.queen_value
-        return material
+    def piece_value(self, piece):
+        if piece.piece_type == chess.PAWN:
+            return self.pawn_value
+        elif piece.piece_type == chess.KNIGHT:
+            return self.knight_value
+        elif piece.piece_type == chess.BISHOP:
+            return self.bishop_value
+        elif piece.piece_type == chess.ROOK:
+            return self.rook_value
+        elif piece.piece_type == chess.QUEEN:
+            return self.queen_value
+        elif piece.piece_type == chess.KING:
+            return self.king_value
+        return 0
 
-    def minimax(self, depth, alpha, beta, is_maximizing):
-        if depth == 0:
-            return -self.evaluate()
-        if is_maximizing:
-            best_move = -9999
-            for move in self.board.legal_moves:
-                self.board.push(move)
-                best_move = max(best_move, self.minimax(depth - 1, alpha, beta, not is_maximizing))
-                self.board.pop()
-                alpha = max(alpha, best_move)
-                if beta <= alpha:
-                    return best_move
-            return best_move
+    def evaluate(self, board) -> float:
+        if board.is_checkmate():
+            if board.turn:
+                return float('-inf')
+            else:
+                return float('inf')
+        elif board.is_stalemate() or board.is_insufficient_material():
+            return 0
         else:
-            best_move = 9999
-            for move in self.board.legal_moves:
-                self.board.push(move)
-                best_move = min(best_move, self.minimax(depth - 1, alpha, beta, not is_maximizing))
-                self.board.pop()
-                beta = min(beta, best_move)
-                if beta <= alpha:
-                    return best_move
-            return best_move
+            score = 0
+            for square in chess.SQUARES:
+                piece = board.piece_at(square)
+                if piece is not None:
+                    if piece.color == chess.WHITE:
+                        score += self.piece_value(piece)
+                    else:
+                        score -= self.piece_value(piece)
+            return score
+
+    def minimax(self, board, depth, maximizing_player, alpha, beta):
+        if depth == 0 or board.is_game_over():
+            return self.evaluate(board)
         
-    def best_move(self, depth):
+        legal_moves = list(board.legal_moves)
+        if maximizing_player:
+            max_eval = float('-inf')
+            for move in legal_moves:
+                board.push(move) # Make the move
+                eval = self.minimax(board, depth - 1, False, alpha, beta)
+                board.pop() # Undo the move
+                max_eval = max(max_eval, eval)
+                alpha = max(alpha, eval)
+                if beta <= alpha:
+                    break
+            return max_eval
+        else:
+            min_eval = float('inf')
+            for move in legal_moves:
+                board.push(move)
+                eval = self.minimax(board, depth - 1, True, alpha, beta)
+                board.pop()
+                min_eval = min(min_eval, eval)
+                beta = min(beta, eval)
+                if beta <= alpha:
+                    break
+            return min_eval
+            
+    def find_best_move(self, depth):
+        legal_moves = list(self.board.legal_moves)
         best_move = None
-        best_value = -9999
-        alpha = -10000
-        beta = 10000
-        for move in self.board.legal_moves:
+        best_eval = float('-inf')
+
+        for move in legal_moves:
             self.board.push(move)
-            board_value = self.minimax(depth - 1, alpha, beta, False)
+            eval = self.minimax(self.board, depth - 1, False, float('-inf'), float('inf'))
             self.board.pop()
-            if board_value > best_value:
-                best_value = board_value
+
+            if eval > best_eval:
+                best_eval = eval
                 best_move = move
+
         return best_move
 
 
@@ -168,3 +197,4 @@ if __name__ == "__main__":
                 print(chess_bot.board.outcome())
 
                 playing = False
+
