@@ -63,7 +63,7 @@ class Bot:
         return chess.Move.from_uci(initial_position + new_position) in self.board.legal_moves
     
     def next_move(self) -> str:
-        depth = 5 # change depth here
+        depth = 4 # change depth here
         """
             The main call and response loop for playing a game of chess.
 
@@ -74,79 +74,125 @@ class Bot:
         # Assume that you are playing an arbitrary game. This function, which is
         # the core "brain" of the bot, should return the next move in any circumstance.
 
-        legal_moves = list(self.board.legal_moves)
-
-        # Order moves based on the priority: captures > pawn moves > castling > other moves (for ab pruning)
-        ordered_moves = sorted(legal_moves, key=lambda move: self.move_priority(self.board, move), reverse=True)
-
-        best_move = None
-        best_eval = float('-inf')
-
-        for move in ordered_moves:
-            self.board.push(move)
-            eval = self.minimax(self.board, depth - 1, False, float('-inf'), float('inf')) # We play as black
-            self.board.pop()
-
-            if eval > best_eval:
-                best_eval = eval
-                best_move = move
-        
-        print(best_eval)
-
-        return str(best_move)
+        return self.minimax_root(self.board, depth, False)
 
     def evaluate(self, board) -> float:
-
+        
         piece_values = {
             chess.PAWN: 1,
             chess.KNIGHT: 3,
-            chess.BISHOP: 3.15, # Rank bishops slightly higher than knights
+            chess.BISHOP: 3.15,
             chess.ROOK: 5,
             chess.QUEEN: 9,
             chess.KING: 9999 # King is worth "infinite" points
         }
 
+        piece_endgame_weights = {
+            chess.KNIGHT: 4,
+            chess.BISHOP: 4,
+            chess.ROOK: 10,
+            chess.QUEEN: 25,
+        }
+
+        white_material = 0
+        black_material = 0
+
         def get_positional_bonus(piece, square):
             # Simple positional bonuses for pieces
             bonus = 0
             if piece.piece_type == chess.PAWN:
-                bonus += 0.1 * (7 - chess.rank_index(square))
-            elif piece.piece_type == chess.KNIGHT:
-                bonus += 0.2 * (4 - abs(3 - chess.file_index(square)))  # Bonus for controlling the center
-            elif piece.piece_type == chess.BISHOP:
-                bonus += 0.1 * (7 - chess.rank_index(square))  # Bonus for controlling long diagonals
-            elif piece.piece_type == chess.ROOK:
-                bonus += 0.1 * (7 - chess.rank_index(square))  # Bonus for controlling open files
-            elif piece.piece_type == chess.QUEEN:
-                bonus += 0.1 * (7 - chess.rank_index(square))  # Bonus for queen mobility
+                bonus += get_pawn_push_bonus(piece, square)
+            elif piece.piece_type == chess.KING:
+                bonus += get_king_safety_bonus(piece, square)
+            else: # Minor pieces
+                controlled_squares = board.attacks(square)
+                if piece.piece_type == chess.KNIGHT:
+                    for square in controlled_squares:
+                        if board.piece_at(square) is not None:
+                            bonus += 0.03
+                        bonus += 0.015 * (4 - abs(3 - chess.square_file(square)))  # Bonus for controlling the center
+                    #bonus += 0.025 * controlling_squares  # Bonus for controlling squares
+                    #bonus += 0.2 * (4 - abs(3 - chess.file_index(square)))  # Bonus for controlling the center
+                    bonus -= get_undevelopment_penalty_knight(piece, square)
+                elif piece.piece_type == chess.BISHOP:
+                    bonus += 0.02 * len(controlled_squares)  # Bonus for controlling long diagonals
+                    for attacked_square in controlled_squares:
+                        if board.piece_at(attacked_square) is not None and board.is_pinned(not piece.color, attacked_square):
+                            bonus += 0.2 # Bonus for pinning pieces
+                    bonus -= get_undevelopment_penalty_bishop(piece, square)
+                elif piece.piece_type == chess.ROOK:
+                    bonus += get_rook_open_file_bonus(piece, square) + get_connected_rooks_bonus(piece, square) + (0.02 * len(controlled_squares))  # Bonus for controlling squares
+                elif piece.piece_type == chess.QUEEN:
+                    bonus += 0.015 * len(controlled_squares)   # Give queen a smaller bonus since queens have more mobility 
             return bonus
         
-        def king_safety(board, color):
-            # Evaluate king safety based on pawn structure and piece positions
-            king_square = board.king(color)
+        def get_pawn_push_bonus(piece, square):
+            if piece.color == chess.WHITE:
+                distance_to_promotion = 7 - chess.square_rank(square)
+                promotion_square = chess.square(chess.square_file(square), 7)
+            else:
+                distance_to_promotion = chess.square_rank(square)
+                promotion_square = chess.square(chess.square_file(square), 0)
+            bonus = 2 * (3 ** (1 - distance_to_promotion)) # Exponential bonus for pawns closer to promotion - I used 2 when the pawn is 1 square away from promotion because people typically equate 2 pawns on the 7th rank to a rook
+            """
+            pawn_file = chess.between(promotion_square, square)
+            for front_square in pawn_file:
+                if board.piece_at(front_square) is not None and board.piece_at(front_square).piece_type == chess.PAWN and board.piece_at(front_square).color is not piece.color:
+                    return bonus + 0.5 # If pawn is blocked, return half the bonus
+            """
+            return bonus
+        
+        def get_king_safety_bonus(piece, square):
+            bonus = 0
+            for attacked_square in board.attacks(square):
+                adjacent_piece = board.piece_at(attacked_square)
+                if adjacent_piece is not None:
+                    if adjacent_piece.piece_type == chess.PAWN and adjacent_piece.color == piece.color:
+                        bonus += 0.05 # Bonus for king being protected by pawn
+                    bonus += 0.02 # Bonus for king being protected by other pieces
+            return bonus
+        
+        def get_king_danger_penalty(piece, square):
+            if piece.color == chess.WHITE:
+                king_square = board.king(chess.WHITE)
+        
+        def get_rook_open_file_bonus(piece, square):
+            rook_rank = chess.square_rank(square)
+            if (piece.color == chess.WHITE and rook_rank == 0) or (piece.color == chess.BLACK and rook_rank == 7): # Check if rook is on the 1st or 8th rank
+                rook_file = chess.square_file(square)
+                for pawn_square in board.pieces(chess.PAWN, piece.color):
+                    if chess.square_file(pawn_square) == rook_file:
+                        return 0
+                return 0.15 # Give bonus for rook being on an open file - not blocked by its own pawns
+            return 0
+        
+        def get_connected_rooks_bonus(piece, square):
+            bonus = 0
+            rooks = board.pieces(chess.ROOK, piece.color)
+            if len(rooks) > 1:
+                for rook_square in rooks:
+                    if rook_square != square and rook_square in board.attacks(square):
+                        bonus += 0.12 # Give bonus for rooks being connected
+            return bonus
 
-            # Penalty for exposed king
-            safety_score = 0
-            if board.is_checkmate():
-                safety_score -= 1000  # Strong penalty for checkmate
-
-            # Bonus for pawn shield in front of the king
-            pawn_shield_squares = chess.SquareSet(chess.pawn_push(color, king_square)) & board.pieces(chess.PAWN, color)
-            safety_score += len(pawn_shield_squares) * 0.1
-
-            # Penalty for open lines towards the king
-            enemy_rooks = board.pieces(chess.ROOK, not color)
-            for enemy_rook_square in enemy_rooks:
-                if chess.square_file(enemy_rook_square) == chess.square_file(king_square):
-                    safety_score -= 0.2  # Penalty for open file towards the king
-
-            return safety_score
+        def get_undevelopment_penalty_knight(piece, square):
+            penalty = 0
+            if chess.square_rank(square) == 0 or chess.square_rank(square) == 7:
+                penalty += 0.25 # knights on the first or last rank of the board are doing nothin
+            if chess.square_file(square) == 0 or chess.square_file(square) == 7: 
+                penalty += 0.15 # knights on the edge of the board are less valuable
+            return penalty
+        
+        def get_undevelopment_penalty_bishop(piece, square):
+            if chess.square_rank(square) == 0 or chess.square_rank(square) == 7:
+                return 0.2 # Incentivize bishops to move off the first/last rank
+            return 0
 
         if board.is_checkmate():
             if board.turn:
-                return float('-inf')
+                return -9999
             else:
-                return float('inf')
+                return 9999
         elif board.is_stalemate() or board.is_insufficient_material():
             return 0
         else:
@@ -154,10 +200,14 @@ class Bot:
             for square in chess.SQUARES:
                 piece = board.piece_at(square)
                 if piece is not None:
+                    value = piece_values[piece.piece_type] + get_positional_bonus(piece, square)
                     if piece.color == chess.WHITE:
-                        score += piece_values[piece.piece_type]
+                        score += value
+                        white_material += value
                     else:
-                        score -= piece_values[piece.piece_type]
+                        score -= value
+                        black_material += value
+                    # print(f"Piece: {piece}, Score: {value}")
             return score
 
     def minimax(self, board, depth, maximizing_player, alpha, beta):
@@ -190,16 +240,35 @@ class Bot:
                     break
             return min_eval
         
+    def minimax_root(self, board, depth, maximizing_player):
+        legal_moves = list(board.legal_moves)
+        ordered_moves = sorted(legal_moves, key=lambda move: self.move_priority(board, move), reverse=True)
+
+        best_move = None
+        best_eval = float('inf')
+
+        for move in ordered_moves:
+            board.push(move)
+            eval = self.minimax(board, depth - 1, not maximizing_player, float('-inf'), float('inf'))
+            board.pop()
+            if eval < best_eval:
+                best_eval = eval
+                best_move = move
+                
+                print(f"Best move: {best_move}, Best eval: {best_eval}")
+        
+        return str(best_move)
+        
     def move_priority(self, board, move):
-        # Define a priority for each move type: captures > pawn moves > castling > other moves
-        if board.is_capture(move):
+        # Define a priority for each move type: checks > captures > major piece moves  > other moves
+        if board.gives_check(move):
+            return 4
+        elif board.is_capture(move):
             return 3
-        elif board.is_zeroing(move):
+        elif not board.is_zeroing(move):
             return 2
-        elif board.is_castling(move):
-            return 1
         else:
-            return 0
+            return 1
 
 
 # Add promotion stuff
