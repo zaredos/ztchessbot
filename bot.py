@@ -90,6 +90,8 @@ class Bot:
             if eval > best_eval:
                 best_eval = eval
                 best_move = move
+        
+        print(best_eval)
 
         return str(best_move)
 
