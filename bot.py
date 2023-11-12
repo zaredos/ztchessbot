@@ -46,12 +46,6 @@ def game_manager() -> Iterator[None]:
 class Bot:
     def __init__(self, fen=None):
         self.board = chess.Board(fen if fen else "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
-        self.pawn_value = 1
-        self.knight_value = 3
-        self.bishop_value = 3.15
-        self.rook_value = 5
-        self.queen_value = 9
-        self.king_value = 1000
 
     def check_move_is_legal(self, initial_position, new_position) -> bool:
 
@@ -67,9 +61,9 @@ class Bot:
         """
 
         return chess.Move.from_uci(initial_position + new_position) in self.board.legal_moves
-
+    
     def next_move(self) -> str:
-        depth = 5
+        depth = 5 # change depth here
         """
             The main call and response loop for playing a game of chess.
 
@@ -80,24 +74,72 @@ class Bot:
         # Assume that you are playing an arbitrary game. This function, which is
         # the core "brain" of the bot, should return the next move in any circumstance.
 
-        return self.find_best_move(depth).uci()
-    
-    def piece_value(self, piece):
-        if piece.piece_type == chess.PAWN:
-            return self.pawn_value
-        elif piece.piece_type == chess.KNIGHT:
-            return self.knight_value
-        elif piece.piece_type == chess.BISHOP:
-            return self.bishop_value
-        elif piece.piece_type == chess.ROOK:
-            return self.rook_value
-        elif piece.piece_type == chess.QUEEN:
-            return self.queen_value
-        elif piece.piece_type == chess.KING:
-            return self.king_value
-        return 0
+        legal_moves = list(self.board.legal_moves)
+
+        # Order moves based on the priority: captures > pawn moves > castling > other moves (for ab pruning)
+        ordered_moves = sorted(legal_moves, key=lambda move: self.move_priority(self.board, move), reverse=True)
+
+        best_move = None
+        best_eval = float('-inf')
+
+        for move in ordered_moves:
+            self.board.push(move)
+            eval = self.minimax(self.board, depth - 1, False, float('-inf'), float('inf')) # We play as black
+            self.board.pop()
+
+            if eval > best_eval:
+                best_eval = eval
+                best_move = move
+
+        return str(best_move)
 
     def evaluate(self, board) -> float:
+
+        piece_values = {
+            chess.PAWN: 1,
+            chess.KNIGHT: 3,
+            chess.BISHOP: 3.15, # Rank bishops slightly higher than knights
+            chess.ROOK: 5,
+            chess.QUEEN: 9,
+            chess.KING: 9999 # King is worth "infinite" points
+        }
+
+        def get_positional_bonus(piece, square):
+            # Simple positional bonuses for pieces
+            bonus = 0
+            if piece.piece_type == chess.PAWN:
+                bonus += 0.1 * (7 - chess.rank_index(square))
+            elif piece.piece_type == chess.KNIGHT:
+                bonus += 0.2 * (4 - abs(3 - chess.file_index(square)))  # Bonus for controlling the center
+            elif piece.piece_type == chess.BISHOP:
+                bonus += 0.1 * (7 - chess.rank_index(square))  # Bonus for controlling long diagonals
+            elif piece.piece_type == chess.ROOK:
+                bonus += 0.1 * (7 - chess.rank_index(square))  # Bonus for controlling open files
+            elif piece.piece_type == chess.QUEEN:
+                bonus += 0.1 * (7 - chess.rank_index(square))  # Bonus for queen mobility
+            return bonus
+        
+        def king_safety(board, color):
+            # Evaluate king safety based on pawn structure and piece positions
+            king_square = board.king(color)
+
+            # Penalty for exposed king
+            safety_score = 0
+            if board.is_checkmate():
+                safety_score -= 1000  # Strong penalty for checkmate
+
+            # Bonus for pawn shield in front of the king
+            pawn_shield_squares = chess.SquareSet(chess.pawn_push(color, king_square)) & board.pieces(chess.PAWN, color)
+            safety_score += len(pawn_shield_squares) * 0.1
+
+            # Penalty for open lines towards the king
+            enemy_rooks = board.pieces(chess.ROOK, not color)
+            for enemy_rook_square in enemy_rooks:
+                if chess.square_file(enemy_rook_square) == chess.square_file(king_square):
+                    safety_score -= 0.2  # Penalty for open file towards the king
+
+            return safety_score
+
         if board.is_checkmate():
             if board.turn:
                 return float('-inf')
@@ -111,9 +153,9 @@ class Bot:
                 piece = board.piece_at(square)
                 if piece is not None:
                     if piece.color == chess.WHITE:
-                        score += self.piece_value(piece)
+                        score += piece_values[piece.piece_type]
                     else:
-                        score -= self.piece_value(piece)
+                        score -= piece_values[piece.piece_type]
             return score
 
     def minimax(self, board, depth, maximizing_player, alpha, beta):
@@ -121,9 +163,11 @@ class Bot:
             return self.evaluate(board)
         
         legal_moves = list(board.legal_moves)
+        ordered_moves = sorted(legal_moves, key=lambda move: self.move_priority(board, move), reverse=True)
+
         if maximizing_player:
             max_eval = float('-inf')
-            for move in legal_moves:
+            for move in ordered_moves:
                 board.push(move) # Make the move
                 eval = self.minimax(board, depth - 1, False, alpha, beta)
                 board.pop() # Undo the move
@@ -134,7 +178,7 @@ class Bot:
             return max_eval
         else:
             min_eval = float('inf')
-            for move in legal_moves:
+            for move in ordered_moves:
                 board.push(move)
                 eval = self.minimax(board, depth - 1, True, alpha, beta)
                 board.pop()
@@ -143,22 +187,17 @@ class Bot:
                 if beta <= alpha:
                     break
             return min_eval
-            
-    def find_best_move(self, depth):
-        legal_moves = list(self.board.legal_moves)
-        best_move = None
-        best_eval = float('-inf')
-
-        for move in legal_moves:
-            self.board.push(move)
-            eval = self.minimax(self.board, depth - 1, False, float('-inf'), float('inf'))
-            self.board.pop()
-
-            if eval > best_eval:
-                best_eval = eval
-                best_move = move
-
-        return best_move
+        
+    def move_priority(self, board, move):
+        # Define a priority for each move type: captures > pawn moves > castling > other moves
+        if board.is_capture(move):
+            return 3
+        elif board.is_zeroing(move):
+            return 2
+        elif board.is_castling(move):
+            return 1
+        else:
+            return 0
 
 
 # Add promotion stuff
