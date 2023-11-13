@@ -62,8 +62,7 @@ class Bot:
 
         return chess.Move.from_uci(initial_position + new_position) in self.board.legal_moves
     
-    def next_move(self) -> str:
-        depth = 4 # change depth here
+    def next_move(self, depth) -> str:
         """
             The main call and response loop for playing a game of chess.
 
@@ -88,18 +87,18 @@ class Bot:
         }
 
         piece_endgame_weights = {
-            chess.KNIGHT: 4,
-            chess.BISHOP: 4,
-            chess.ROOK: 10,
-            chess.QUEEN: 25,
+            chess.KNIGHT: 0.4,
+            chess.BISHOP: 0.4,
+            chess.ROOK: 1.0,
+            chess.QUEEN: 2.5,
         }
 
-        white_material = 0
-        black_material = 0
+        endgame_weight = 0
 
         def get_positional_bonus(piece, square):
             # Simple positional bonuses for pieces
             bonus = 0
+            endgame_weight = 0
             if piece.piece_type == chess.PAWN:
                 bonus += get_pawn_push_bonus(piece, square)
             elif piece.piece_type == chess.KING:
@@ -114,17 +113,21 @@ class Bot:
                     #bonus += 0.025 * controlling_squares  # Bonus for controlling squares
                     #bonus += 0.2 * (4 - abs(3 - chess.file_index(square)))  # Bonus for controlling the center
                     bonus -= get_undevelopment_penalty_knight(piece, square)
+                    endgame_weight += piece_endgame_weights[chess.KNIGHT]
                 elif piece.piece_type == chess.BISHOP:
                     bonus += 0.02 * len(controlled_squares)  # Bonus for controlling long diagonals
                     for attacked_square in controlled_squares:
                         if board.piece_at(attacked_square) is not None and board.is_pinned(not piece.color, attacked_square):
-                            bonus += 0.2 # Bonus for pinning pieces
+                            bonus += 0.16 # Bonus for pinning pieces
                     bonus -= get_undevelopment_penalty_bishop(piece, square)
+                    endgame_weight += piece_endgame_weights[chess.BISHOP]
                 elif piece.piece_type == chess.ROOK:
                     bonus += get_rook_open_file_bonus(piece, square) + get_connected_rooks_bonus(piece, square) + (0.02 * len(controlled_squares))  # Bonus for controlling squares
+                    endgame_weight += piece_endgame_weights[chess.ROOK]
                 elif piece.piece_type == chess.QUEEN:
-                    bonus += 0.015 * len(controlled_squares)   # Give queen a smaller bonus since queens have more mobility 
-            return bonus
+                    bonus += 0.012 * len(controlled_squares)   # Give queen a smaller bonus since queens have more mobility 
+                    endgame_weight += piece_endgame_weights[chess.QUEEN]
+            return bonus, endgame_weight
         
         def get_pawn_push_bonus(piece, square):
             if piece.color == chess.WHITE:
@@ -151,7 +154,7 @@ class Bot:
                         bonus += 0.05 # Bonus for king being protected by pawn
                     bonus += 0.02 # Bonus for king being protected by other pieces
             return bonus
-        
+
         def get_king_danger_penalty(piece, square):
             if piece.color == chess.WHITE:
                 king_square = board.king(chess.WHITE)
@@ -178,7 +181,7 @@ class Bot:
         def get_undevelopment_penalty_knight(piece, square):
             penalty = 0
             if chess.square_rank(square) == 0 or chess.square_rank(square) == 7:
-                penalty += 0.25 # knights on the first or last rank of the board are doing nothin
+                penalty += 0.2 # knights on the first or last rank of the board are doing nothin
             if chess.square_file(square) == 0 or chess.square_file(square) == 7: 
                 penalty += 0.15 # knights on the edge of the board are less valuable
             return penalty
@@ -200,14 +203,13 @@ class Bot:
             for square in chess.SQUARES:
                 piece = board.piece_at(square)
                 if piece is not None:
-                    value = piece_values[piece.piece_type] + get_positional_bonus(piece, square)
+                    value = piece_values[piece.piece_type] + get_positional_bonus(piece, square)[0]
                     if piece.color == chess.WHITE:
                         score += value
-                        white_material += value
                     else:
                         score -= value
-                        black_material += value
                     # print(f"Piece: {piece}, Score: {value}")
+                
             return score
 
     def minimax(self, board, depth, maximizing_player, alpha, beta):
@@ -217,7 +219,7 @@ class Bot:
         legal_moves = list(board.legal_moves)
         ordered_moves = sorted(legal_moves, key=lambda move: self.move_priority(board, move), reverse=True)
 
-        if maximizing_player:
+        if maximizing_player: # White
             max_eval = float('-inf')
             for move in ordered_moves:
                 board.push(move) # Make the move
@@ -255,8 +257,7 @@ class Bot:
                 best_eval = eval
                 best_move = move
                 
-                print(f"Best move: {best_move}, Best eval: {best_eval}")
-        
+        print(f"Best move: {best_move}, Eval: {best_eval}")
         return str(best_move)
         
     def move_priority(self, board, move):
@@ -269,6 +270,8 @@ class Bot:
             return 2
         else:
             return 1
+
+
 
 
 # Add promotion stuff
@@ -289,12 +292,22 @@ if __name__ == "__main__":
         """
 
         playing = True
+        player_playing = True
+        depth = 5
 
         while playing:
             if chess_bot.board.turn:
-                chess_bot.board.push_san(test_bot.get_move(chess_bot.board))
+                if player_playing:
+                    print("Your move:")
+                    move = input()
+                    while not chess.Move.from_uci(move) in chess_bot.board.legal_moves:
+                        print("Invalid move. Try again:")
+                        move = input()
+                    chess_bot.board.push_san(move)
+                else:
+                    chess_bot.board.push_san(test_bot.get_move(chess_bot.board))
             else:
-                chess_bot.board.push_san(chess_bot.next_move())
+                chess_bot.board.push_san(chess_bot.next_move(depth))
             print(chess_bot.board, end="\n\n")
 
             if chess_bot.board.is_game_over():
@@ -307,4 +320,14 @@ if __name__ == "__main__":
                 print(chess_bot.board.outcome())
 
                 playing = False
+
+        """
+        pgn_game = chess.pgn.Game()
+        pgn_game.setup(chess.Board())
+        for move in chess_bot.board.move_stack:
+            print(move)
+            pgn_game.add_main_variation(move)
+        with open("game.txt", "w") as txt_file:
+            txt_file.write(str(pgn_game))
+        """
 
