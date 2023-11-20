@@ -156,8 +156,7 @@ class Bot:
             return bonus
 
         def get_king_danger_penalty(piece, square):
-            if piece.color == chess.WHITE:
-                king_square = board.king(chess.WHITE)
+            pass
         
         def get_rook_open_file_bonus(piece, square):
             rook_rank = chess.square_rank(square)
@@ -255,8 +254,7 @@ class Bot:
             board.pop()
             if eval < best_eval:
                 best_eval = eval
-                best_move = move
-                
+                best_move = move  
         print(f"Best move: {best_move}, Eval: {best_eval}")
         return str(best_move)
         
@@ -271,8 +269,65 @@ class Bot:
         else:
             return 1
 
+class TranspositionTable:
+    def __init__(self):
+        self.table = {}
+        self.hash = 0
+        self.random_keys = [random.randint(0, 2 ** 64 - 1) for _ in range(769)] # 12 * 64 + 1
+        self.piece_keys = {
+            chess.PAWN: 0,
+            chess.KNIGHT: 1,
+            chess.BISHOP: 2,
+            chess.ROOK: 3,
+            chess.QUEEN: 4,
+            chess.KING: 5
+        }
+        self.turn_key = 12
 
+    def probe(self):
+        return self.table.get(self.hash, None)
+    
+    def store(self, depth, score, flag):
+        self.table[self.hash] = (depth, score, flag)
 
+    def zobrist_hash(self, board):
+        for square in chess.SQUARES:
+            piece = board.piece_at(square)
+            if piece is not None:
+                self.hash ^= self.random_keys[64 * self.get_piece_key(piece) + square]  
+        if board.turn == chess.BLACK:
+            self.hash ^= self.random_keys[64 * self.turn_key]
+        return self.hash
+
+    def move_hash(self, board, move):
+        from_square = move.from_square
+        to_square = move.to_square
+        piece = board.piece_at(from_square) # Don't need to check if piece is None because move is legal
+        captured_piece = board.piece_at(to_square)
+        if captured_piece is not None: # If a piece is captured, remove it from the hash
+            self.hash ^= self.random_keys[64 * self.get_piece_key(captured_piece) + to_square]
+        piece_value = self.get_piece_key(piece)
+        self.hash ^= self.random_keys[64 * piece_value + from_square] # Remove piece from old square
+        self.hash ^= self.random_keys[64 * piece_value + to_square] # Add piece to new square
+        self.hash ^= self.random_keys[64 * self.turn_key]
+        return self.hash
+    
+    def get_piece_key(self, piece):
+        piece_value = self.piece_keys[piece.piece_type]
+        if piece.color == chess.BLACK:
+            piece_value += 6
+        return piece_value
+    
+    def set_hash(self, hash):
+        self.hash = hash
+
+    def get_hash(self):
+        return self.hash
+
+    def clear(self):
+        self.table = {}
+
+    
 
 # Add promotion stuff
 
@@ -293,7 +348,7 @@ if __name__ == "__main__":
 
         playing = True
         player_playing = True
-        depth = 5
+        depth = 4
 
         while playing:
             if chess_bot.board.turn:
