@@ -49,10 +49,9 @@ class Bot2:
 
         return chess.Move.from_uci(initial_position + new_position) in self.board.legal_moves
     
-    def next_move(self, depth) -> str:
+    def next_move(self, maximizing_player, depth=5) -> str:
         """
             The main call and response loop for playing a game of chess.
-
             Returns:
                 str: The current location and the next move.
         """
@@ -60,7 +59,7 @@ class Bot2:
         # Assume that you are playing an arbitrary game. This function, which is
         # the core "brain" of the bot, should return the next move in any circumstance.
 
-        return self.minimax_root(self.board, depth, True)
+        return self.minimax_root(self.board, maximizing_player, depth)
 
     def evaluate(self, board) -> float:
         
@@ -204,7 +203,7 @@ class Bot2:
             self.transposition_table.store(depth, beta, 2, board.fen())
             return beta
         
-    def minimax_root(self, board, depth, maximizing_player):
+    def minimax_root(self, board, maximizing_player, depth):
         legal_moves = list(board.legal_moves)
         ordered_moves = sorted(legal_moves, key=lambda move: self.move_priority(board, move), reverse=True)
         self.best_eval = float('-inf')

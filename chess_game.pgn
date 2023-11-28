@@ -6,4 +6,4 @@
 [Black "Chess Bot"]
 [Result "*"]
 
-1. Nf3 d5 2. e3 a6 3. h3 Nc6 4. Nd4 Nxd4 5. exd4 Bf5 6. Bd3 Bxd3 7. cxd3 Qd7 8. b3 Qe6+ 9. Qe2 Qg6 10. O-O Qc6 11. Qd1 e5 12. dxe5 *
+1. h4 e5 2. Nc3 Bb4 3. e4 Ne7 4. Qg4 Nbc6 5. Qxg7 Rg8 6. Qxh7 Nd4 7. Kd1 d5 8. Nxd5 Bg4+ 9. f3 Bf5 10. Nxe7 Bxh7 11. Nxg8 Bxg8 12. c3 Bxc3 13. bxc3 Nc6 14. a4 f6 15. Ba3 Bb3+ 16. Ke1 Bxa4 17. Bc4 Nd4 18. cxd4 Qxd4 19. Rc1 Rd8 20. Bb4 Qb2 21. Ne2 Qxb4 22. Kf2 Qxd2 23. h5 Qd6 24. h6 Qc5+ 25. Kf1 Rd1+ 26. Rxd1 Bxd1 27. h7 Bxe2+ 28. Kxe2 Qxc4+ 29. Kf2 Qd4+ 30. Kg3 Ke7 31. h8=Q Qe3 32. Rh7+ Ke6 33. Qe8+ Kd6 34. Qd7+ Kc5 35. Qxc7+ Kb5 36. Qxb7+ Kc5 37. Qxa7+ Kd6 38. Qxe3 Kc6 39. Rh6 Kb5 40. Rxf6 Kb4 41. Qb6+ Kc4 42. Rc6+ Kd3 43. Qb3+ Ke2 44. Rc2+ Kf1 45. Qb1# *

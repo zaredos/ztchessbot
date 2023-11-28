@@ -42,14 +42,13 @@ def game_manager() -> Iterator[None]:
     print("===== GAME ENDED =====")
 
 class Bot:
-    def __init__(self, fen=None, maximizing_player=False):
+    def __init__(self, fen=None):
         self.board = chess.Board(fen if fen else "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
         self.transposition_table = TranspositionTable()
         self.piece_tables = {piece: convert_piece_table(piece_table) for piece, piece_table in piece_tables.items()}
         self.endgame_piece_tables = {piece: convert_piece_table(piece_table) for piece, piece_table in endgame_piece_tables.items()}
         self.reverse_piece_tables = {piece: reverse_table(piece_table) for piece, piece_table in self.piece_tables.items()}
         self.reverse_endgame_piece_tables = {piece: reverse_table(piece_table) for piece, piece_table in self.endgame_piece_tables.items()}
-        self.maximizing_player = maximizing_player
         self.starting_squares = [None] * 64
         for square in chess.SQUARES:
             piece = self.board.piece_at(square)
@@ -59,7 +58,7 @@ class Bot:
         self.piece_values = {
             chess.PAWN: 1,
             chess.KNIGHT: 3,
-            chess.BISHOP: 3.15,
+            chess.BISHOP: 3,
             chess.ROOK: 5,
             chess.QUEEN: 9,
             chess.KING: 9999 # King is worth "infinite" points
@@ -90,7 +89,7 @@ class Bot:
 
         return chess.Move.from_uci(initial_position + new_position) in self.board.legal_moves
     
-    def next_move(self, max_think_time=None) -> str:
+    def next_move(self, color, max_think_time=None) -> str:
         """
             The main call and response loop for playing a game of chess.
 
@@ -105,9 +104,9 @@ class Bot:
         same_best_move_count = 0
         prev_best_move = None
         depth = 1
-        while depth < 4 or same_best_move_count < 2 or prev_best_move == None:
-            best_move = self.minimax_root(self.board, depth)
-            if best_move is not None:
+        while same_best_move_count < 2 or prev_best_move == None:
+            best_move = self.negamax_root(self.board, depth, color)
+            if best_move is not None:   
                 if best_move == prev_best_move:
                     same_best_move_count += 1
                 else:
@@ -195,7 +194,8 @@ class Bot:
                 for pawn_square in enemy_pawns:
                     if chess.square_file(pawn_square) in adjacent_files or pawn_square == pawn_file:
                         has_adjacent_enemy_pawns = True
-            if has_adjacent_enemy_pawns:
+                        break
+            if not has_adjacent_enemy_pawns:
                 score += 0.475 * endgame_weight # Passed pawn bonus
             for attacked_square in board.attacks(square):
                 if attacked_square in self.middle_squares:
@@ -204,7 +204,7 @@ class Bot:
         
         def get_two_bishops_bonus(piece, square):
             if len(board.pieces(chess.BISHOP, piece.color)) > 1:
-                return 0.1
+                return 0.11 # Bonus for having two bishops
             return 0
             
         def get_knight_outpost_bonus(piece, square):
@@ -275,8 +275,17 @@ class Bot:
                 for pawn_square in board.pieces(chess.PAWN, piece.color):
                     if chess.square_file(pawn_square) == rook_file:
                         return 0
-                return 0.15 # Give bonus for rook being on an open file - not blocked by its own pawns
+                return 0.15 * (1 - endgame_weight) # Give bonus for rook being on an open file - not blocked by its own pawns
             return 0
+        
+        def get_rook_behind_pawn_bonus(piece, square):
+            bonus = 0
+            controlled_squares = board.attacks(square)
+            for controlled_square in controlled_squares:
+                controlled_piece = board.piece_at(controlled_square)
+                if controlled_piece is not None and controlled_piece.color == piece.color and controlled_piece.piece_type == chess.PAWN:
+                    if controlled_piece.piece_type == chess.PAWN and controlled_piece.color == piece.color:
+                        bonus += 0.05
         
         def get_connected_rooks_bonus(piece, square):
             bonus = 0
@@ -306,8 +315,9 @@ class Bot:
                         score -= value
             return score
 
-    def minimax(self, board, depth, maximizing_player, alpha, beta):
+    def negamax(self, board, depth, color, alpha, beta):
         hash = self.transposition_table.probe()
+        alpha_original = alpha
         if hash is not None and hash[0] >= depth:
             if hash[2] == 0: # Exact
                 return hash[1], hash[3]
@@ -319,46 +329,41 @@ class Bot:
                 return hash[1], hash[3]
 
         if depth == 0 or board.is_game_over(): 
-            return self.evaluate(board), None # Assume minimax is always called with depth > 0
+            return color * self.evaluate(board), None # Assume minimax is always called with depth > 0
         
         ordered_moves = self.get_ordered_moves(board)
+        best_eval = float('-inf')
         best_move = None
-        if maximizing_player: # White
-            for move in ordered_moves:
-                eval = self.push_and_pop_move(board, depth, not maximizing_player, alpha, beta, move)
-                if eval > alpha:
-                    alpha = eval
-                    self.transposition_table.store(depth, eval, 0, move)
-                    best_move = move
-                if beta <= alpha:
-                    self.transposition_table.store(depth, alpha, 1, move)
-                    return alpha, move
-            return alpha, best_move
+        for move in ordered_moves:
+            eval = -self.push_and_pop_move(board, depth - 1, -color, -beta, -alpha, move)
+            if eval > best_eval:
+                best_eval = eval
+                alpha = max(alpha, eval)
+                best_move = move
+            if beta <= alpha:
+                break
+
+        if eval <= alpha_original:
+            self.transposition_table.store(depth, eval, 2, best_move) # Upper bound
+        elif eval >= beta:
+            self.transposition_table.store(depth, eval, 1, best_move)
         else:
-            for move in ordered_moves:
-                eval = self.push_and_pop_move(board, depth, not maximizing_player, alpha, beta, move)
-                if eval < beta:
-                    beta = eval
-                    self.transposition_table.store(depth, eval, 0, move)
-                    best_move = move
-                if beta <= alpha:
-                    self.transposition_table.store(depth, beta, 2, move)
-                    return beta, move
-            return beta, best_move
+            self.transposition_table.store(depth, eval, 0, best_move)
+        return best_eval, best_move
         
-    def minimax_root(self, board, depth):
+    def negamax_root(self, board, depth, color):
         self.transposition_table.zobrist_hash(board)
-        eval, best_move = self.minimax(board, depth, self.maximizing_player, float('-inf'), float('inf'))
+        eval, best_move = self.negamax(board, depth, color, float('-inf'), float('inf'))
         print(f"Best move: {best_move}, Eval: {eval}")
         return str(best_move)
     
-    def push_and_pop_move(self, board, depth, maximizing_player, alpha, beta, move):
+    def push_and_pop_move(self, board, depth, color, alpha, beta, move):
         prev_hash = self.transposition_table.get_hash()
         self.transposition_table.move_hash(board, move)
         board.push(move)
         if board.is_castling(move) or board.is_en_passant(move) or move.promotion is not None:
             self.transposition_table.zobrist_hash(board)
-        eval, _ = self.minimax(board, depth - 1, maximizing_player, alpha, beta)
+        eval, _ = self.negamax(board, depth, color, alpha, beta)
         board.pop()
         self.transposition_table.set_hash(prev_hash)
         return eval
@@ -401,12 +406,12 @@ class Bot:
                     if attacked_piece is not None:
                         if attacked_piece.color == piece.color and not self.is_safe_square(board, attacked_square, attacked_piece):
                             return priority + 3.25 + (1 - self.piece_values[piece.piece_type] / 9) * .1 # Defend unprotected piece
-                        elif attacked_piece.color != piece.color and self.piece_values[attacked_piece.piece_type] > self.piece_values[piece.piece_type]:
-                            return priority + 3.5 + (1 - self.piece_values[piece.piece_type] / 9) * .1 # Attack piece with higher value
+                        elif attacked_piece.color != piece.color and (self.piece_values[attacked_piece.piece_type] > self.piece_values[piece.piece_type] or len(new_board.attackers(not piece.color, attacked_square)) > len(new_board.attackers(piece.color, attacked_square))):
+                            return priority + 3.5 + (1 - self.piece_values[piece.piece_type] / 9) * .1 # Attack piece with higher value/undefended pieces
                         elif self.piece_values[piece.piece_type] < 4 and self.starting_squares[move.from_square] == piece and len(attacked_squares.intersection(self.middle_squares)) > 0 and endgame_weight < 0.25: # Develop pieces off starting square
-                            return 2.5 + priority
+                            return 2 + priority
             if board.is_capture(move):
-                return 2 + priority
+                return 2.5 + priority
             elif board.is_castling(move):
                 return 1.5 + priority
             elif not board.is_zeroing(move):
@@ -532,6 +537,7 @@ if __name__ == "__main__":
 
         playing = True
         player_playing = True
+        color = -1
 
         while playing:
             if chess_bot.board.turn:
@@ -545,7 +551,7 @@ if __name__ == "__main__":
                 else:
                     chess_bot.board.push_san(test_bot.get_move(chess_bot.board))
             else:
-                chess_bot.board.push_san(chess_bot.next_move(10))
+                chess_bot.board.push_san(chess_bot.next_move(color, 5))
 
             print(chess_bot.board, end="\n\n")
 
